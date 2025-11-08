@@ -97,5 +97,24 @@ def mark_task_done(user_id: int, task_id: int) -> int:
             conn.close()
     return row_count
 
+def delete_task_db(user_id: int, task_id: int) -> int:
+    row_count = 0
+    try:
+        conn = sqlite3.connect(DB_NAME)
+        cursor = conn.cursor()
+
+        delete_query = "DELETE FROM tasks WHERE id = ? AND user_id = ?"
+
+        cursor.execute(delete_query, (task_id, user_id))
+        conn.commit()
+        row_count = cursor.rowcount
+    except sqlite3.Error as e:
+        logger.error(f"Помилка при видаленні завдання: {e}")
+    finally:
+        if conn:
+            conn.close()
+
+    return row_count
+
 if __name__ == "__main__":
     init_db()

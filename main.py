@@ -6,7 +6,7 @@ from dotenv import load_dotenv
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes, CallbackContext
 
-from database import init_db, add_task, get_tasks, mark_task_done
+from database import init_db, add_task, get_tasks, mark_task_done, delete_task_db
 
 load_dotenv()
 TOKEN = os.getenv("TG_TOKEN")
@@ -84,6 +84,33 @@ async def done_task(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             f"❌ Завдання з ID {task_id} не знайдено серед ваших активних завдань."
         )
 
+
+async def delete_task(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user = update.effective_user
+
+    if not context.args:
+        await update.message.reply_text(
+            "Будь ласка, вкажіть ID завдання для видалення.\n"
+            "Наприклад: <code>/delete 123</code>",
+            parse_mode="HTML"
+        )
+        return
+
+    try:
+        task_id = int(context.args[0])
+    except ValueError:
+        await update.message.reply_text("ID завдання має бути числом.")
+        return
+
+    rows_affected = delete_task_db(user.id, task_id)
+
+    if rows_affected > 0:
+        await update.message.reply_text(f"🗑️ Завдання (ID: {task_id}) успішно видалено.")
+    else:
+        await update.message.reply_text(
+            f"❌ Завдання з ID {task_id} не знайдено."
+        )
+
 def main() -> None:
     #init db
     init_db()
@@ -95,6 +122,7 @@ def main() -> None:
     application.add_handler(CommandHandler("new", new_task)) #create task
     application.add_handler(CommandHandler("list", list_tasks)) #show your tasks
     application.add_handler(CommandHandler("done", done_task)) #done task
+    application.add_handler(CommandHandler("delete", delete_task)) #delete task
     print("Бот запускається... Натисніть Ctrl+C для зупинки.")
     application.run_polling()
 
