@@ -1,0 +1,6 @@
+.idea/
+todo.db
+.env
+venv/
+.venv/
+
