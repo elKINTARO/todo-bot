@@ -3,8 +3,16 @@ import os
 from http.client import responses
 
 from dotenv import load_dotenv
-from telegram import Update
-from telegram.ext import Application, CommandHandler, ContextTypes, CallbackContext
+from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove
+from telegram.ext import (
+    Application,
+    CommandHandler,
+    ContextTypes,
+    #for dialog
+    ConversationHandler,
+    MessageHandler,
+    filters,
+    )
 
 from database import init_db, add_task, get_tasks, mark_task_done, delete_task_db
 
@@ -15,6 +23,8 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+GET_TASK_TEXT, GET_DEADLINE = range(2)
+
 #Logic bot
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = update.effective_user
@@ -24,23 +34,63 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         f"Надішли мені команду, і я допоможу тобі організувати завдання. "
     )
 
-async def new_task(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def new_task_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    await update.message.reply_text(
+        "Гаразд, нове завдання. \n"
+        "Напиши мені його текст. (або /cancel для скасування)"
+    )
+    return GET_TASK_TEXT
+
+async def receive_task_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    task_text = update.message.text
+    context.user_data["current_task_text"] = task_text
+    reply_keyboard = [["Пропустити"]]
+    await update.message.reply_text(
+        "✅ Текст збережено!\n"
+        "Тепер введи дедлайн (наприклад, 'завтра о 15:00' або '25.12').\n\n"
+        "Або просто натисни 'Пропустити'.",
+        reply_markup=ReplyKeyboardMarkup(
+            reply_keyboard, one_time_keyboard=True, resize_keyboard=True
+        ),
+    )
+    return GET_DEADLINE
+
+async def receive_deadline(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    deadline = update.message.text
     user = update.effective_user
-    task_text = " ".join(context.args)
+    task_text = context.user_data["current_task_text"]
+    add_task(user.id, task_text, deadline)
 
-    if not task_text:
-        await update.message.reply_text(
-            "Введіть будь ласка текст завдання після команди \n"
-            "Наприклад: '/new Написати звіт'",
-            parse_mode="MarkdownV2"
-        )
-        return
+    await update.message.reply_text(
+        f"✅ Завдання додано:\n"
+        f"<b>{task_text}</b>\n"
+        f"<i>Дедлайн: {deadline}</i>",
+        parse_mode="HTML",
+        reply_markup=ReplyKeyboardRemove()
+    )
+    context.user_data.clear()
+    return ConversationHandler.END
 
-    success = add_task(user.id, task_text)
-    if success:
-        await update.message.reply_text(f"✅ Завдання додано:\n\n{task_text}")
-    else:
-        await update.message.reply_text("❌ Сталася помилка. Не вдалося додати завдання.")
+async def skip_deadline(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    user = update.effective_user
+    task_text = context.user_data["current_task_text"]
+    add_task(user.id, task_text)
+
+    await update.message.reply_text(
+        f"✅ Завдання додано:\n"
+        f"<b>{task_text}</b> (без дедлайну)",
+        parse_mode="HTML",
+        reply_markup=ReplyKeyboardRemove()
+    )
+    context.user_data.clear()
+    return ConversationHandler.END
+
+async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    context.user_data.clear()
+    await update.message.reply_text(
+        "Дію скасовано.", reply_markup=ReplyKeyboardRemove()
+    )
+    return ConversationHandler.END
 
 async def list_tasks(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = update.effective_user
@@ -118,8 +168,24 @@ def main() -> None:
     #create app
     application = Application.builder().token(TOKEN).build()
 
+    conv_handler = ConversationHandler(
+        entry_points=[CommandHandler("new", new_task_start)],
+        states={
+            #wait text
+            GET_TASK_TEXT: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, receive_task_text)
+            ],
+            #wait deadline
+            GET_DEADLINE: [
+                MessageHandler(filters.Regex("^Пропустити$"), skip_deadline),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, receive_deadline)
+            ],
+        },
+        fallbacks=[CommandHandler("cancel", cancel)],
+    )
+
+    application.add_handler(conv_handler) #dialog create task
     application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("new", new_task)) #create task
     application.add_handler(CommandHandler("list", list_tasks)) #show your tasks
     application.add_handler(CommandHandler("done", done_task)) #done task
     application.add_handler(CommandHandler("delete", delete_task)) #delete task

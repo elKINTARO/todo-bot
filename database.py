@@ -34,14 +34,14 @@ def init_db():
             conn.close()
             logger.info("З'єднання з SQLite закрито")
 
-def add_task(user_id: int, task_text: str) -> bool:
+def add_task(user_id: int, task_text: str, deadline: str = None) -> bool:
     try:
         conn = sqlite3.connect(DB_NAME)
         cursor = conn.cursor()
-        insert_query = "INSERT INTO tasks (user_id, task_text) VALUES (?, ?)"
-        cursor.execute(insert_query, (user_id, task_text))
+        insert_query = "INSERT INTO tasks (user_id, task_text, deadline) VALUES (?, ?, ?)"
+        cursor.execute(insert_query, (user_id, task_text, deadline))
         conn.commit()
-        logger.info(f"Нове завдання додано для user_id {user_id}")
+        logger.info(f"Нове завдання додано для user_id {user_id} з дедлайном {deadline}")
         return True
 
     except sqlite3.Error as e:
