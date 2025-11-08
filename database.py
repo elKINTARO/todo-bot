@@ -52,5 +52,29 @@ def add_task(user_id: int, task_text: str) -> bool:
         if conn:
             conn.close()
 
+def get_tasks(user_id: int) -> list:
+    tasks = []
+    try:
+        conn = sqlite3.connect(DB_NAME)
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+
+        select_query = """
+        SELECT id, task_text 
+        FROM tasks 
+        WHERE user_id = ? AND status = 'pending' 
+        ORDER BY created_at ASC
+        """
+
+        cursor.execute(select_query, (user_id, ))
+        tasks = cursor.fetchall()
+
+    except sqlite3.Error as e:
+        logger.error(f"Помилка при отриманні завдань: {e}")
+    finally:
+        if conn:
+            conn.close()
+    return tasks
+
 if __name__ == "__main__":
     init_db()

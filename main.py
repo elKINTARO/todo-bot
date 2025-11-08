@@ -1,10 +1,12 @@
 import logging
 import os
+from http.client import responses
+
 from dotenv import load_dotenv
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes, CallbackContext
 
-from database import init_db, add_task
+from database import init_db, add_task, get_tasks
 
 load_dotenv()
 TOKEN = os.getenv("TG_TOKEN")
@@ -40,6 +42,24 @@ async def new_task(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     else:
         await update.message.reply_text("❌ Сталася помилка. Не вдалося додати завдання.")
 
+async def list_tasks(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user = update.effective_user
+    tasks = get_tasks(user.id)
+
+    if not tasks:
+        await update.message.reply_text("🎉 Чудова робота! У вас немає активних завдань.")
+        return
+
+    response_lines = ["<b>📋 Ваші активні завдання:</b>", ""]
+    for task in tasks:
+        response_lines.append(f"• {task['task_text']} (ID: <code>{task['id']}</code>)")
+
+    response_lines.append("\nЩоб позначити завдання як виконане, використовуйте:\n"
+                          "<code>/done [ID завдання]</code>")
+
+    response_text = "\n".join(response_lines)
+    await update.message.reply_html(response_text)
+
 def main() -> None:
     #init db
     init_db()
@@ -49,6 +69,7 @@ def main() -> None:
 
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("new", new_task)) #create task
+    application.add_handler(CommandHandler("list", list_tasks)) #show your task
     print("Бот запускається... Натисніть Ctrl+C для зупинки.")
     application.run_polling()
 
