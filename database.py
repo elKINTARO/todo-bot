@@ -116,5 +116,41 @@ def delete_task_db(user_id: int, task_id: int) -> int:
 
     return row_count
 
+def get_single_task(user_id: int, task_id: int):
+    task = None
+    try:
+        conn = sqlite3.connect(DB_NAME)
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        select_query = "SELECT * FROM tasks WHERE id = ? AND user_id = ?"
+        cursor.execute(select_query, (task_id, user_id))
+        task = cursor.fetchone()
+    except sqlite3.Error as e:
+        logger.error(f"Помилка при отриманні одного завдання: {e}")
+    finally:
+        if conn:
+            conn.close()
+    return task
+
+def update_task_text(user_id: int, task_id: int, new_text: str) -> bool:
+    try:
+        conn = sqlite3.connect(DB_NAME)
+        cursor = conn.cursor()
+        update_query = """
+        UPDATE tasks 
+        SET task_text = ? 
+        WHERE id = ? AND user_id = ?
+        """
+
+        cursor.execute(update_query, (new_text, task_id, user_id))
+        conn.commit()
+        return cursor.rowcount > 0
+    except sqlite3.Error as e:
+        logger.error(f"Помилка при оновленні тексту завдання: {e}")
+        return False
+    finally:
+        if conn:
+            conn.close()
+
 if __name__ == "__main__":
     init_db()

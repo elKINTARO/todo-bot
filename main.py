@@ -14,7 +14,7 @@ from telegram.ext import (
     filters,
     )
 
-from database import init_db, add_task, get_tasks, mark_task_done, delete_task_db
+from database import init_db, add_task, get_tasks, mark_task_done, delete_task_db, get_single_task, update_task_text
 
 load_dotenv()
 TOKEN = os.getenv("TG_TOKEN")
@@ -24,6 +24,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 GET_TASK_TEXT, GET_DEADLINE = range(2)
+EDIT_GET_ID, EDIT_GET_TEXT = range(2, 4)
 
 #Logic bot
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -90,6 +91,69 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     await update.message.reply_text(
         "Дію скасовано.", reply_markup=ReplyKeyboardRemove()
     )
+    return ConversationHandler.END
+
+
+async def edit_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    user = update.effective_user
+
+    tasks = get_tasks(user.id)
+    if not tasks:
+        await update.message.reply_text("У вас немає активних завдань для редагування.")
+        return ConversationHandler.END
+
+    response_lines = ["<b>Яке завдання ви хочете редагувати?</b>\n"]
+    for task in tasks:
+        response_lines.append(f"• <code>{task['id']}</code>: {task['task_text']}")
+
+    response_lines.append("\nНапишіть ID завдання (або /cancel для скасування).")
+
+    await update.message.reply_html("\n".join(response_lines))
+
+    return EDIT_GET_ID
+
+async def edit_receive_id(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    user = update.effective_user
+
+    try:
+        task_id = int(update.message.text)
+    except ValueError:
+        await update.message.reply_text("Це не схоже на ID. Будь ласка, введіть число.")
+        return EDIT_GET_ID
+
+    task = get_single_task(user.id, task_id)
+
+    if not task:
+        await update.message.reply_text("❌ Завдання з таким ID не знайдено.")
+        return EDIT_GET_ID
+
+    context.user_data['edit_task_id'] = task_id
+
+    await update.message.reply_html(
+        f"Гаразд, редагуємо завдання:\n"
+        f"<i>{task['task_text']}</i>\n\n"
+        f"Тепер надішли мені <b>новий текст</b> для цього завдання."
+    )
+    return EDIT_GET_TEXT
+
+
+async def edit_receive_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    user = update.effective_user
+    new_text = update.message.text
+
+    task_id = context.user_data['edit_task_id']
+
+    success = update_task_text(user.id, task_id, new_text)
+
+    if success:
+        await update.message.reply_html(
+            f"✅ Завдання (ID: {task_id}) оновлено:\n<b>{new_text}</b>"
+        )
+    else:
+        await update.message.reply_text("❌ Сталася несподівана помилка при оновленні.")
+
+    context.user_data.clear()
+
     return ConversationHandler.END
 
 async def list_tasks(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -184,7 +248,21 @@ def main() -> None:
         fallbacks=[CommandHandler("cancel", cancel)],
     )
 
+    edit_conv_handler = ConversationHandler(
+        entry_points=[CommandHandler("edit", edit_start)],
+        states={
+            EDIT_GET_ID: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, edit_receive_id)
+            ],
+            EDIT_GET_TEXT: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, edit_receive_text)
+            ],
+        },
+        fallbacks=[CommandHandler("cancel", cancel)],
+    )
+
     application.add_handler(conv_handler) #dialog create task
+    application.add_handler(edit_conv_handler) #dialog edit task
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("list", list_tasks)) #show your tasks
     application.add_handler(CommandHandler("done", done_task)) #done task
