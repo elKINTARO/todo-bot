@@ -1,7 +1,9 @@
 import sqlite3
 import logging
 
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
+)
 logger = logging.getLogger(__name__)
 
 DB_NAME = 'todo.db'
@@ -31,6 +33,24 @@ def init_db():
         if conn:
             conn.close()
             logger.info("З'єднання з SQLite закрито")
+
+def add_task(user_id: int, task_text: str) -> bool:
+    try:
+        conn = sqlite3.connect(DB_NAME)
+        cursor = conn.cursor()
+        insert_query = "INSERT INTO tasks (user_id, task_text) VALUES (?, ?)"
+        cursor.execute(insert_query, (user_id, task_text))
+        conn.commit()
+        logger.info(f"Нове завдання додано для user_id {user_id}")
+        return True
+
+    except sqlite3.Error as e:
+        logger.error(f"Помилка при додаванні завдання: {e}")
+        return False
+
+    finally:
+        if conn:
+            conn.close()
 
 if __name__ == "__main__":
     init_db()
