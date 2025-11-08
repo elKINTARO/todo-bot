@@ -76,5 +76,26 @@ def get_tasks(user_id: int) -> list:
             conn.close()
     return tasks
 
+def mark_task_done(user_id: int, task_id: int) -> int:
+    row_count = 0
+    try:
+        conn = sqlite3.connect(DB_NAME)
+        cursor = conn.cursor()
+        update_query = """
+        UPDATE tasks 
+        SET status = 'done' 
+        WHERE id = ? AND user_id = ? AND status = 'pending'
+        """
+        cursor.execute(update_query, (task_id, user_id))
+        conn.commit()
+        row_count = cursor.rowcount
+
+    except sqlite3.Error as e:
+        logger.error(f"Помилка при оновленні завдання: {e}")
+    finally:
+        if conn:
+            conn.close()
+    return row_count
+
 if __name__ == "__main__":
     init_db()
