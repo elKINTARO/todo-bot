@@ -26,13 +26,24 @@ logger = logging.getLogger(__name__)
 GET_TASK_TEXT, GET_DEADLINE = range(2)
 EDIT_GET_ID, EDIT_GET_TEXT = range(2, 4)
 
+MAIN_KEYBOARD_LAYOUT = [
+    ["Нове завдання 📝"],
+    ["Список завдань 📋", "Редагувати ✏️"],
+    ["Завершити ✅", "Видалити 🗑️"],
+]
+MAIN_KEYBOARD_MARKUP = ReplyKeyboardMarkup(
+    MAIN_KEYBOARD_LAYOUT,
+    resize_keyboard=True,
+)
+
 #Logic bot
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = update.effective_user
     await update.message.reply_html(
         f"Здоров, {user.first_name}! \n\n"
         f"Я твій особистий TODO-бот. "
-        f"Надішли мені команду, і я допоможу тобі організувати завдання. "
+        f"Надішли мені команду, і я допоможу тобі організувати завдання. ",
+        reply_markup=MAIN_KEYBOARD_MARKUP
     )
 
 async def new_task_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -67,7 +78,7 @@ async def receive_deadline(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         f"<b>{task_text}</b>\n"
         f"<i>Дедлайн: {deadline}</i>",
         parse_mode="HTML",
-        reply_markup=ReplyKeyboardRemove()
+        reply_markup=MAIN_KEYBOARD_MARKUP
     )
     context.user_data.clear()
     return ConversationHandler.END
@@ -81,7 +92,7 @@ async def skip_deadline(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
         f"✅ Завдання додано:\n"
         f"<b>{task_text}</b> (без дедлайну)",
         parse_mode="HTML",
-        reply_markup=ReplyKeyboardRemove()
+        reply_markup=MAIN_KEYBOARD_MARKUP
     )
     context.user_data.clear()
     return ConversationHandler.END
@@ -89,7 +100,7 @@ async def skip_deadline(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data.clear()
     await update.message.reply_text(
-        "Дію скасовано.", reply_markup=ReplyKeyboardRemove()
+        "Дію скасовано.", reply_markup=MAIN_KEYBOARD_MARKUP
     )
     return ConversationHandler.END
 
@@ -147,10 +158,14 @@ async def edit_receive_text(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 
     if success:
         await update.message.reply_html(
-            f"✅ Завдання (ID: {task_id}) оновлено:\n<b>{new_text}</b>"
+            f"✅ Завдання (ID: {task_id}) оновлено:\n<b>{new_text}</b>",
+            reply_markup=MAIN_KEYBOARD_MARKUP
         )
     else:
-        await update.message.reply_text("❌ Сталася несподівана помилка при оновленні.")
+        await update.message.reply_text(
+            "❌ Сталася несподівана помилка при оновленні.",
+            reply_markup=MAIN_KEYBOARD_MARKUP
+        )
 
     context.user_data.clear()
 
@@ -161,7 +176,10 @@ async def list_tasks(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     tasks = get_tasks(user.id)
 
     if not tasks:
-        await update.message.reply_text("🎉 Чудова робота! У вас немає активних завдань.")
+        await update.message.reply_text(
+            "🎉 Чудова робота! У вас немає активних завдань.",
+            reply_markup=MAIN_KEYBOARD_MARKUP
+            )
         return
 
     response_lines = ["<b>📋 Ваші активні завдання:</b>", ""]
@@ -172,7 +190,10 @@ async def list_tasks(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
                           "<code>/done [ID завдання]</code>")
 
     response_text = "\n".join(response_lines)
-    await update.message.reply_html(response_text)
+    await update.message.reply_html(
+        response_text,
+        reply_markup=MAIN_KEYBOARD_MARKUP
+    )
 
 async def done_task(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = update.effective_user
@@ -180,22 +201,30 @@ async def done_task(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.message.reply_text(
             "Будь ласка, вкажіть ID завдання.\n"
             "Наприклад: <code>/done 123</code>",
-            parse_mode="HTML"
+            parse_mode="HTML",
+            reply_markup=MAIN_KEYBOARD_MARKUP
         )
         return
     try:
         task_id = int(context.args[0])
     except ValueError:
-        await update.message.reply_text("ID завдання має бути числом.")
+        await update.message.reply_text(
+            "ID завдання має бути числом.",
+            reply_markup=MAIN_KEYBOARD_MARKUP
+        )
         return
 
     rows_affected =mark_task_done(user.id, task_id)
 
     if rows_affected:
-        await update.message.reply_text(f"✅ Завдання (ID: {task_id}) позначено як виконане!")
+        await update.message.reply_text(
+            f"✅ Завдання (ID: {task_id}) позначено як виконане!",
+            reply_markup=MAIN_KEYBOARD_MARKUP
+        )
     else:
         await update.message.reply_text(
-            f"❌ Завдання з ID {task_id} не знайдено серед ваших активних завдань."
+            f"❌ Завдання з ID {task_id} не знайдено серед ваших активних завдань.",
+            reply_markup=MAIN_KEYBOARD_MARKUP
         )
 
 
@@ -206,69 +235,86 @@ async def delete_task(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         await update.message.reply_text(
             "Будь ласка, вкажіть ID завдання для видалення.\n"
             "Наприклад: <code>/delete 123</code>",
-            parse_mode="HTML"
+            parse_mode="HTML",
+            reply_markup=MAIN_KEYBOARD_MARKUP
         )
         return
 
     try:
         task_id = int(context.args[0])
     except ValueError:
-        await update.message.reply_text("ID завдання має бути числом.")
+        await update.message.reply_text(
+            "ID завдання має бути числом.",
+            reply_markup=MAIN_KEYBOARD_MARKUP
+        )
         return
 
     rows_affected = delete_task_db(user.id, task_id)
 
     if rows_affected > 0:
-        await update.message.reply_text(f"🗑️ Завдання (ID: {task_id}) успішно видалено.")
+        await update.message.reply_text(
+            f"🗑️ Завдання (ID: {task_id}) успішно видалено.",
+            reply_markup=MAIN_KEYBOARD_MARKUP
+        )
     else:
         await update.message.reply_text(
-            f"❌ Завдання з ID {task_id} не знайдено."
+            f"❌ Завдання з ID {task_id} не знайдено.",
+            reply_markup=MAIN_KEYBOARD_MARKUP
         )
+
 
 def main() -> None:
     #init db
     init_db()
-    logger.info("Базу даних ініціалізовано")
-    #create app
+    logger.info("Базу даних ініціалізовано.")
+    #build app
     application = Application.builder().token(TOKEN).build()
 
-    conv_handler = ConversationHandler(
-        entry_points=[CommandHandler("new", new_task_start)],
+    new_conv_handler = ConversationHandler(
+        entry_points=[
+            CommandHandler("new", new_task_start),
+            MessageHandler(filters.Regex("^Нове завдання 📝$"), new_task_start)
+        ],
         states={
-            #wait text
-            GET_TASK_TEXT: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, receive_task_text)
-            ],
-            #wait deadline
+            GET_TASK_TEXT: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_task_text)],
             GET_DEADLINE: [
                 MessageHandler(filters.Regex("^Пропустити$"), skip_deadline),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, receive_deadline)
+                MessageHandler(filters.TEXT & ~filters.COMMAND, receive_deadline),
             ],
         },
         fallbacks=[CommandHandler("cancel", cancel)],
     )
-
     edit_conv_handler = ConversationHandler(
-        entry_points=[CommandHandler("edit", edit_start)],
+        entry_points=[
+            CommandHandler("edit", edit_start),
+            MessageHandler(filters.Regex("^Редагувати ✏️$"), edit_start)
+        ],
         states={
-            EDIT_GET_ID: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, edit_receive_id)
-            ],
-            EDIT_GET_TEXT: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, edit_receive_text)
-            ],
+            EDIT_GET_ID: [MessageHandler(filters.TEXT & ~filters.COMMAND, edit_receive_id)],
+            EDIT_GET_TEXT: [MessageHandler(filters.TEXT & ~filters.COMMAND, edit_receive_text)],
         },
         fallbacks=[CommandHandler("cancel", cancel)],
     )
 
-    application.add_handler(conv_handler) #dialog create task
-    application.add_handler(edit_conv_handler) #dialog edit task
+    application.add_handler(new_conv_handler)
+    application.add_handler(edit_conv_handler)
+    #start
     application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("list", list_tasks)) #show your tasks
-    application.add_handler(CommandHandler("done", done_task)) #done task
-    application.add_handler(CommandHandler("delete", delete_task)) #delete task
+    #list
+    application.add_handler(CommandHandler("list", list_tasks))
+    application.add_handler(MessageHandler(filters.Regex("^Список завдань 📋$"), list_tasks))
+    #done
+    application.add_handler(CommandHandler("done", done_task))
+    application.add_handler(MessageHandler(filters.Regex("^Завершити ✅$"), done_task))
+    #delete
+    application.add_handler(CommandHandler("delete", delete_task))
+    application.add_handler(MessageHandler(filters.Regex("^Видалити 🗑️$"), delete_task))
+
+    application.add_handler(CommandHandler("cancel", cancel))
+
     print("Бот запускається... Натисніть Ctrl+C для зупинки.")
     application.run_polling()
+
 
 if __name__ == "__main__":
     main()
