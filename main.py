@@ -16,7 +16,7 @@ from telegram.ext import (
     CallbackQueryHandler
     )
 
-from database import init_db, add_task, get_tasks, mark_task_done, delete_task_db, get_single_task, update_task_text
+from database import init_db, add_task, get_tasks, mark_task_done, delete_task_db, get_single_task, update_task_text, update_task_deadline
 
 load_dotenv()
 TOKEN = os.getenv("TG_TOKEN")
@@ -26,7 +26,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 GET_TASK_TEXT, GET_DEADLINE = range(2)
-EDIT_GET_ID, EDIT_GET_TEXT = range(2, 4)
+EDIT_MENU, EDIT_GET_TEXT, EDIT_GET_DEADLINE = range(2, 5)
 
 MAIN_KEYBOARD_LAYOUT = [
     ["Нове завдання 📝"],
@@ -42,8 +42,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = update.effective_user
     await update.message.reply_html(
         f"Здоров, {user.first_name}! \n\n"
-        f"Я твій особистий TODO-бот. "
-        f"Надішли мені команду, і я допоможу тобі організувати завдання. ",
+        f"Я твій особистий планер задач. "
+        f"Обирай що хочеш зробити",
         reply_markup=MAIN_KEYBOARD_MARKUP
     )
 
@@ -105,11 +105,11 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     )
     return ConversationHandler.END
 
-
-async def edit_start_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+async def edit_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
     await query.answer()
-    _, _, task_id_str = query.data.split(':')
+
+    _, _, task_id_str = query.data.split(":")
     task_id = int(task_id_str)
     user_id = query.from_user.id
 
@@ -120,12 +120,43 @@ async def edit_start_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     context.user_data['edit_task_id'] = task_id
 
+    keyboard = [
+        [
+            InlineKeyboardButton(
+                "✏️ Текст",
+                callback_data=f"edit:text:{task_id}"
+            ),
+            InlineKeyboardButton(
+                "📅 Дедлайн",
+                callback_data=f"edit:deadline:{task_id}"
+            ),
+        ],
+        [
+            InlineKeyboardButton(
+                "⬅️ Назад до списку",
+                callback_data="edit:cancel"
+            )
+        ]
+    ]
+
     await query.edit_message_text(
-        text=f"<i>Редагування:\n{task['task_text']}</i>\n\n"
-             f"<b>Надішли мені новий текст</b> (або /cancel)",
+        text=f"<b>Редагування завдання:</b>\n{task['task_text']}\n"
+             f"<i>Дедлайн: {task['deadline'] or 'немає'}</i>\n\n"
+             "Що хочете змінити?",
+        reply_markup=InlineKeyboardMarkup(keyboard),
         parse_mode="HTML"
     )
 
+    return EDIT_MENU
+
+async def edit_text_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query
+    await query.answer()
+    await query.message.reply_text(
+        "Надішли мені <b>новий текст</b> для цього завдання "
+        "(або /cancel для скасування).",
+        parse_mode="HTML"
+    )
     return EDIT_GET_TEXT
 
 async def edit_receive_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -151,6 +182,63 @@ async def edit_receive_text(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 
     return ConversationHandler.END
 
+async def edit_deadline_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query
+    await query.answer()
+    reply_keyboard = [["Видалити дедлайн"]]
+    await query.message.reply_text(
+        "Надішли мені <b>новий дедлайн</b> (наприклад, 'завтра о 10')\n"
+        "або натисни 'Видалити дедлайн' (чи /cancel).",
+        reply_markup=ReplyKeyboardMarkup(
+            reply_keyboard, one_time_keyboard=True, resize_keyboard=True
+        ),
+        parse_mode="HTML"
+    )
+    return EDIT_GET_DEADLINE
+
+
+async def edit_receive_deadline(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    user = update.effective_user
+    new_deadline = update.message.text
+
+    task_id = context.user_data['edit_task_id']
+    update_task_deadline(user.id, task_id, new_deadline)
+
+    await update.message.reply_text(
+        f"✅ Дедлайн для завдання (ID: {task_id}) оновлено.",
+        reply_markup=MAIN_KEYBOARD_MARKUP  # Повертаємо головну клавіатуру
+    )
+
+    context.user_data.clear()
+    return ConversationHandler.END
+
+
+async def edit_remove_deadline(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    user = update.effective_user
+    task_id = context.user_data['edit_task_id']
+    update_task_deadline(user.id, task_id, None)
+
+    await update.message.reply_text(
+        f"✅ Дедлайн для завдання (ID: {task_id}) видалено.",
+        reply_markup=MAIN_KEYBOARD_MARKUP
+    )
+
+    context.user_data.clear()
+    return ConversationHandler.END
+
+
+async def edit_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query
+    await query.answer()
+
+    await query.message.reply_text(
+        "Редагування скасовано.",
+        reply_markup=MAIN_KEYBOARD_MARKUP
+    )
+
+    context.user_data.clear()
+    return ConversationHandler.END
+
 async def list_tasks(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = update.effective_user
     tasks = get_tasks(user.id)
@@ -170,6 +258,11 @@ async def list_tasks(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     for task in tasks:
         task_id = task['id']
         task_text = task['task_text']
+        deadline = task['deadline']
+
+        message_text = f"<b>Завдання ID {task_id}:</b>\n{task_text}"
+        if deadline:
+            message_text += f"\n<i>Дедлайн: {deadline}</i>"
 
         keyboard_buttons = [
             InlineKeyboardButton(
@@ -188,7 +281,7 @@ async def list_tasks(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         keyboard = InlineKeyboardMarkup([keyboard_buttons])
 
         await update.message.reply_html(
-            f"<b>Завдання ID {task_id}:</b>\n{task_text}",
+            message_text,
             reply_markup=keyboard
         )
 
@@ -313,16 +406,37 @@ def main() -> None:
     edit_conv_handler = ConversationHandler(
         entry_points=[
             CallbackQueryHandler(
-                edit_start_callback,
+                edit_menu,
                 pattern=r"^task:edit:\d+$"
             )
         ],
         states={
+            EDIT_MENU: [
+                CallbackQueryHandler(
+                    edit_text_start,
+                    pattern=r"^edit:text:\d+$"
+                ),
+                CallbackQueryHandler(
+                    edit_deadline_start,
+                    pattern=r"^edit:deadline:\d+$"
+                ),
+                CallbackQueryHandler(
+                    edit_cancel,
+                    pattern=r"^edit:cancel$"
+                )
+            ],
             EDIT_GET_TEXT: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, edit_receive_text)
             ],
+            EDIT_GET_DEADLINE: [
+                MessageHandler(filters.Regex("^Видалити дедлайн$"), edit_remove_deadline),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, edit_receive_deadline),
+            ],
         },
-        fallbacks=[CommandHandler("cancel", cancel)],
+        fallbacks=[
+            CommandHandler("cancel", cancel),
+            CallbackQueryHandler(edit_cancel, pattern=r"^edit:cancel$")
+        ],
     )
 
     application.add_handler(new_conv_handler)

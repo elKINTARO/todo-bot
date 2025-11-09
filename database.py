@@ -60,7 +60,7 @@ def get_tasks(user_id: int) -> list:
         cursor = conn.cursor()
 
         select_query = """
-        SELECT id, task_text 
+        SELECT id, task_text, deadline 
         FROM tasks 
         WHERE user_id = ? AND status = 'pending' 
         ORDER BY created_at ASC
@@ -147,6 +147,26 @@ def update_task_text(user_id: int, task_id: int, new_text: str) -> bool:
         return cursor.rowcount > 0
     except sqlite3.Error as e:
         logger.error(f"Помилка при оновленні тексту завдання: {e}")
+        return False
+    finally:
+        if conn:
+            conn.close()
+
+def update_task_deadline(user_id: int, task_id: int, new_deadline: str | None) -> bool:
+    try:
+        conn = sqlite3.connect(DB_NAME)
+        cursor = conn.cursor()
+
+        update_query = """
+        UPDATE tasks 
+        SET deadline = ? 
+        WHERE id = ? AND user_id = ?
+        """
+        cursor.execute(update_query, (new_deadline, task_id, user_id))
+        conn.commit()
+
+    except sqlite3.Error as e:
+        logger.error(f"Помилка при оновленні дедлайну: {e}")
         return False
     finally:
         if conn:
