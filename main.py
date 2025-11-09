@@ -4,6 +4,7 @@ from http.client import responses
 
 from dotenv import load_dotenv
 from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -12,6 +13,7 @@ from telegram.ext import (
     ConversationHandler,
     MessageHandler,
     filters,
+    CallbackQueryHandler
     )
 
 from database import init_db, add_task, get_tasks, mark_task_done, delete_task_db, get_single_task, update_task_text
@@ -28,8 +30,7 @@ EDIT_GET_ID, EDIT_GET_TEXT = range(2, 4)
 
 MAIN_KEYBOARD_LAYOUT = [
     ["Нове завдання 📝"],
-    ["Список завдань 📋", "Редагувати ✏️"],
-    ["Завершити ✅", "Видалити 🗑️"],
+    ["Список завдань 📋"],
 ]
 MAIN_KEYBOARD_MARKUP = ReplyKeyboardMarkup(
     MAIN_KEYBOARD_LAYOUT,
@@ -105,48 +106,27 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     return ConversationHandler.END
 
 
-async def edit_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    user = update.effective_user
+async def edit_start_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query
+    await query.answer()
+    _, _, task_id_str = query.data.split(':')
+    task_id = int(task_id_str)
+    user_id = query.from_user.id
 
-    tasks = get_tasks(user.id)
-    if not tasks:
-        await update.message.reply_text("У вас немає активних завдань для редагування.")
-        return ConversationHandler.END
-
-    response_lines = ["<b>Яке завдання ви хочете редагувати?</b>\n"]
-    for task in tasks:
-        response_lines.append(f"• <code>{task['id']}</code>: {task['task_text']}")
-
-    response_lines.append("\nНапишіть ID завдання (або /cancel для скасування).")
-
-    await update.message.reply_html("\n".join(response_lines))
-
-    return EDIT_GET_ID
-
-async def edit_receive_id(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    user = update.effective_user
-
-    try:
-        task_id = int(update.message.text)
-    except ValueError:
-        await update.message.reply_text("Це не схоже на ID. Будь ласка, введіть число.")
-        return EDIT_GET_ID
-
-    task = get_single_task(user.id, task_id)
-
+    task = get_single_task(user_id, task_id)
     if not task:
-        await update.message.reply_text("❌ Завдання з таким ID не знайдено.")
-        return EDIT_GET_ID
+        await query.message.reply_text("Помилка: це завдання вже не існує.")
+        return ConversationHandler.END
 
     context.user_data['edit_task_id'] = task_id
 
-    await update.message.reply_html(
-        f"Гаразд, редагуємо завдання:\n"
-        f"<i>{task['task_text']}</i>\n\n"
-        f"Тепер надішли мені <b>новий текст</b> для цього завдання."
+    await query.edit_message_text(
+        text=f"<i>Редагування:\n{task['task_text']}</i>\n\n"
+             f"<b>Надішли мені новий текст</b> (або /cancel)",
+        parse_mode="HTML"
     )
-    return EDIT_GET_TEXT
 
+    return EDIT_GET_TEXT
 
 async def edit_receive_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     user = update.effective_user
@@ -179,21 +159,67 @@ async def list_tasks(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         await update.message.reply_text(
             "🎉 Чудова робота! У вас немає активних завдань.",
             reply_markup=MAIN_KEYBOARD_MARKUP
-            )
+        )
         return
 
-    response_lines = ["<b>📋 Ваші активні завдання:</b>", ""]
-    for task in tasks:
-        response_lines.append(f"• {task['task_text']} (ID: <code>{task['id']}</code>)")
-
-    response_lines.append("\nЩоб позначити завдання як виконане, використовуйте:\n"
-                          "<code>/done [ID завдання]</code>")
-
-    response_text = "\n".join(response_lines)
-    await update.message.reply_html(
-        response_text,
+    await update.message.reply_text(
+        "Ось ваші активні завдання:",
         reply_markup=MAIN_KEYBOARD_MARKUP
     )
+
+    for task in tasks:
+        task_id = task['id']
+        task_text = task['task_text']
+
+        keyboard_buttons = [
+            InlineKeyboardButton(
+                "✅ Виконати",
+                callback_data=f"task:done:{task_id}"
+            ),
+            InlineKeyboardButton(
+                "✏️ Редагувати",
+                callback_data=f"task:edit:{task_id}"
+            ),
+            InlineKeyboardButton(
+                "🗑️ Видалити",
+                callback_data=f"task:del:{task_id}"
+            ),
+        ]
+        keyboard = InlineKeyboardMarkup([keyboard_buttons])
+
+        await update.message.reply_html(
+            f"<b>Завдання ID {task_id}:</b>\n{task_text}",
+            reply_markup=keyboard
+        )
+
+async def task_button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer()
+    data = query.data
+    _, action, task_id_str = data.split(":")
+    task_id = int(task_id_str)
+    user_id = query.from_user.id
+    original_text = query.message.text.split('\n', 1)[-1]
+
+    if action == "done":
+        rows_affected = mark_task_done(user_id, task_id)
+        if rows_affected > 0:
+            await query.edit_message_text(
+                text=f"✅ <b>Виконано:</b>\n<s>{original_text}</s>",
+                parse_mode="HTML"
+            )
+        else:
+            await query.answer("Помилка: завдання не знайдено.")
+
+    elif action == "del":
+        rows_affected = delete_task_db(user_id, task_id)
+        if rows_affected > 0:
+            await query.edit_message_text(
+                text=f"🗑️ <b>Видалено:</b>\n<s>{original_text}</s>",
+                parse_mode="HTML"
+            )
+        else:
+            await query.answer("Помилка: завдання не знайдено.")
 
 async def done_task(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = update.effective_user
@@ -286,12 +312,15 @@ def main() -> None:
     )
     edit_conv_handler = ConversationHandler(
         entry_points=[
-            CommandHandler("edit", edit_start),
-            MessageHandler(filters.Regex("^Редагувати ✏️$"), edit_start)
+            CallbackQueryHandler(
+                edit_start_callback,
+                pattern=r"^task:edit:\d+$"
+            )
         ],
         states={
-            EDIT_GET_ID: [MessageHandler(filters.TEXT & ~filters.COMMAND, edit_receive_id)],
-            EDIT_GET_TEXT: [MessageHandler(filters.TEXT & ~filters.COMMAND, edit_receive_text)],
+            EDIT_GET_TEXT: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, edit_receive_text)
+            ],
         },
         fallbacks=[CommandHandler("cancel", cancel)],
     )
@@ -303,12 +332,15 @@ def main() -> None:
     #list
     application.add_handler(CommandHandler("list", list_tasks))
     application.add_handler(MessageHandler(filters.Regex("^Список завдань 📋$"), list_tasks))
-    #done
-    application.add_handler(CommandHandler("done", done_task))
-    application.add_handler(MessageHandler(filters.Regex("^Завершити ✅$"), done_task))
-    #delete
-    application.add_handler(CommandHandler("delete", delete_task))
-    application.add_handler(MessageHandler(filters.Regex("^Видалити 🗑️$"), delete_task))
+
+    application.add_handler(CallbackQueryHandler(
+        task_button_callback,
+        pattern=r"^task:done:\d+$"
+    ))
+    application.add_handler(CallbackQueryHandler(
+        task_button_callback,
+        pattern=r"^task:del:\d+$"
+    ))
 
     application.add_handler(CommandHandler("cancel", cancel))
 
