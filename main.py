@@ -1,6 +1,8 @@
 import logging
 import os
 from http.client import responses
+import dateparser
+from datetime import datetime, timedelta
 
 from dotenv import load_dotenv
 from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove
@@ -16,7 +18,7 @@ from telegram.ext import (
     CallbackQueryHandler
     )
 
-from database import init_db, add_task, get_tasks, mark_task_done, delete_task_db, get_single_task, update_task_text, update_task_deadline
+from database import init_db, add_task, get_tasks, mark_task_done, delete_task_db, get_single_task, update_task_text, update_task_deadline, get_all_pending_tasks_with_deadline, set_reminder_sent
 
 load_dotenv()
 TOKEN = os.getenv("TG_TOKEN")
@@ -38,6 +40,10 @@ MAIN_KEYBOARD_MARKUP = ReplyKeyboardMarkup(
 )
 
 #Logic bot
+
+def parse_date(date_string):
+    return dateparser.parse(date_string, settings={'PREFER_DATES_FROM': 'future'})
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = update.effective_user
     await update.message.reply_html(
@@ -69,20 +75,41 @@ async def receive_task_text(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     return GET_DEADLINE
 
 async def receive_deadline(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    deadline = update.message.text
+    user_input = update.message.text
     user = update.effective_user
+
+    parsed_date = parse_date(user_input)
+
+    if not parsed_date:
+        await update.message.reply_text(
+            "❌ Не можу зрозуміти цю дату.\n"
+            "Спробуйте формат: <i>25.12.2025 15:00</i> або <i>Завтра о 9 вечора</i>",
+            parse_mode="HTML"
+        )
+        return GET_DEADLINE
+
+    if parsed_date < datetime.now():
+        await update.message.reply_text(
+            "⏳ Ця дата вже минула! Введіть майбутній час.",
+        )
+        return GET_DEADLINE
+
+    formatted_date = parsed_date.strftime('%Y-%m-%d %H:%M:%S')
+
     task_text = context.user_data["current_task_text"]
-    add_task(user.id, task_text, deadline)
+    add_task(user.id, task_text, formatted_date)
 
     await update.message.reply_text(
         f"✅ Завдання додано:\n"
         f"<b>{task_text}</b>\n"
-        f"<i>Дедлайн: {deadline}</i>",
+        f"⏰ Дедлайн: {formatted_date}",
         parse_mode="HTML",
         reply_markup=MAIN_KEYBOARD_MARKUP
     )
+
     context.user_data.clear()
     return ConversationHandler.END
+
 
 async def skip_deadline(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     user = update.effective_user
@@ -199,18 +226,63 @@ async def edit_deadline_start(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 async def edit_receive_deadline(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     user = update.effective_user
-    new_deadline = update.message.text
+    user_input = update.message.text
 
+    parsed_date = parse_date(user_input)
+
+    if not parsed_date:
+        await update.message.reply_text("❌ Незрозуміла дата. Спробуйте ще раз.")
+        return EDIT_GET_DEADLINE
+
+    if parsed_date < datetime.now():
+        await update.message.reply_text("⏳ Дата в минулому! Спробуйте ще раз.")
+        return EDIT_GET_DEADLINE
+
+    formatted_date = parsed_date.strftime('%Y-%m-%d %H:%M:%S')
     task_id = context.user_data['edit_task_id']
-    update_task_deadline(user.id, task_id, new_deadline)
+
+    update_task_text(user.id, task_id, formatted_date)
 
     await update.message.reply_text(
-        f"✅ Дедлайн для завдання (ID: {task_id}) оновлено.",
-        reply_markup=MAIN_KEYBOARD_MARKUP  # Повертаємо головну клавіатуру
+        f"✅ Дедлайн оновлено на: {formatted_date}",
+        reply_markup=MAIN_KEYBOARD_MARKUP
     )
-
     context.user_data.clear()
     return ConversationHandler.END
+
+async def check_deadlines(context: ContextTypes.DEFAULT_TYPE):
+    tasks = get_all_pending_tasks_with_deadline()
+
+    now = datetime.now()
+    for task in tasks:
+        try:
+            deadline_str = task['deadline']
+            deadline_dt = datetime.strptime(deadline_str, "%Y-%m-%d %H:%M:%S")
+
+            time_left = deadline_dt - now
+            if timedelta(minutes=0) < time_left <= timedelta(minutes=30):
+                await context.bot.send_message(
+                    chat_id=task['user_id'],
+                    text=f"⏰ <b>НАГАДУВАННЯ!</b>\n\n"
+                         f"Завдання: <b>{task['task_text']}</b>\n"
+                         f"Дедлайн: {deadline_str} (залишилось менше 30 хв!)",
+                    parse_mode="HTML"
+                )
+
+                set_reminder_sent(task['id'])
+
+            elif time_left < timedelta(minutes=0):
+                await context.bot.send_message(
+                    char_id=task['user_id'],
+                    text=f"🔥 <b>ДЕДЛАЙН ПРОСТРОЧЕНО!</b>\n\n"
+                         f"Завдання: <b>{task['task_text']}</b>\n"
+                         f"Мало бути виконано: {deadline_str}",
+                    parse_mode="HTML"
+                )
+                set_reminder_sent(task['id'])
+
+        except ValueError:
+            continue
 
 
 async def edit_remove_deadline(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -457,6 +529,9 @@ def main() -> None:
     ))
 
     application.add_handler(CommandHandler("cancel", cancel))
+
+    job_queue = application.job_queue
+    job_queue.run_repeating(check_deadlines, interval=60, first=10)
 
     print("Бот запускається... Натисніть Ctrl+C для зупинки.")
     application.run_polling()

@@ -1,5 +1,6 @@
 import sqlite3
 import logging
+from datetime import datetime, timedelta
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
@@ -20,10 +21,15 @@ def init_db():
             task_text TEXT NOT NULL,
             deadline TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            status TEXT DEFAULT 'pending'
+            status TEXT DEFAULT 'pending',
+            reminder_sent BOOLEAN DEFAULT 0
         );
         """
         cursor.execute(create_table_query)
+        try:
+            cursor.execute("ALTER TABLE tasks ADD COLUMN reminder_sent BOOLEAN DEFAULT 0")
+        except sqlite3.OperationalError:
+            pass
         conn.commit()
         logger.info("Таблицю tasks успішно створено (або вона вже існує)")
 
@@ -115,6 +121,40 @@ def delete_task_db(user_id: int, task_id: int) -> int:
             conn.close()
 
     return row_count
+
+def set_reminder_sent(task_id: int):
+    try:
+        conn = sqlite3.connect(DB_NAME)
+        cursor = conn.cursor()
+        cursor.execute("UPDATE tasks SET reminder_sent = 1 WHERE id = ?", (task_id,))
+        conn.commit()
+    except sqlite3.Error as e:
+        logger.error(f"Помилка set_reminder_sent: {e}")
+    finally:
+        if conn: conn.close()
+
+def get_all_pending_tasks_with_deadline():
+    tasks = []
+    try:
+        conn = sqlite3.connect(DB_NAME)
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+
+        query = """
+            SELECT * \
+            FROM tasks
+            WHERE status = 'pending'
+              AND deadline IS NOT NULL
+              AND reminder_sent = 0
+            """
+        cursor.execute(query)
+        tasks = cursor.fetchall()
+    except sqlite3.Error as e:
+        logger.error(f"Помилка get_all_pending_tasks: {e}")
+    finally:
+        if conn: conn.close()
+    return tasks
+
 
 def get_single_task(user_id: int, task_id: int):
     task = None
