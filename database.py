@@ -27,7 +27,7 @@ def init_db():
         """
         cursor.execute(create_table_query)
         try:
-            cursor.execute("ALTER TABLE tasks ADD COLUMN reminder_sent BOOLEAN DEFAULT 0")
+            cursor.execute("ALTER TABLE tasks ADD COLUMN reminder_offset INTEGER DEFAULT 30")
         except sqlite3.OperationalError:
             pass
         conn.commit()
@@ -40,23 +40,22 @@ def init_db():
             conn.close()
             logger.info("З'єднання з SQLite закрито")
 
-def add_task(user_id: int, task_text: str, deadline: str = None) -> bool:
+def add_task(user_id: int, task_text: str, deadline: str = None, reminder_offset: int = 30) -> bool:
     try:
         conn = sqlite3.connect(DB_NAME)
         cursor = conn.cursor()
-        insert_query = "INSERT INTO tasks (user_id, task_text, deadline) VALUES (?, ?, ?)"
-        cursor.execute(insert_query, (user_id, task_text, deadline))
+        insert_query = """
+        INSERT INTO tasks (user_id, task_text, deadline, reminder_offset) 
+        VALUES (?, ?, ?, ?)
+        """
+        cursor.execute(insert_query, (user_id, task_text, deadline, reminder_offset))
         conn.commit()
-        logger.info(f"Нове завдання додано для user_id {user_id} з дедлайном {deadline}")
         return True
-
     except sqlite3.Error as e:
         logger.error(f"Помилка при додаванні завдання: {e}")
         return False
-
     finally:
-        if conn:
-            conn.close()
+        if conn: conn.close()
 
 def get_tasks(user_id: int) -> list:
     tasks = []
@@ -141,12 +140,12 @@ def get_all_pending_tasks_with_deadline():
         cursor = conn.cursor()
 
         query = """
-            SELECT * \
-            FROM tasks
-            WHERE status = 'pending'
-              AND deadline IS NOT NULL
-              AND reminder_sent = 0
-            """
+                SELECT * \
+                FROM tasks
+                WHERE status = 'pending'
+                  AND deadline IS NOT NULL
+                  AND reminder_sent = 0
+                """
         cursor.execute(query)
         tasks = cursor.fetchall()
     except sqlite3.Error as e:

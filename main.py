@@ -27,7 +27,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-GET_TASK_TEXT, GET_DEADLINE = range(2)
+GET_TASK_TEXT, GET_DEADLINE, GET_REMINDER = range(3)
 EDIT_MENU, EDIT_GET_TEXT, EDIT_GET_DEADLINE = range(2, 5)
 
 MAIN_KEYBOARD_LAYOUT = [
@@ -74,54 +74,90 @@ async def receive_task_text(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     )
     return GET_DEADLINE
 
+
 async def receive_deadline(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     user_input = update.message.text
-    user = update.effective_user
 
     parsed_date = parse_date(user_input)
-
-    if not parsed_date:
-        await update.message.reply_text(
-            "❌ Не можу зрозуміти цю дату.\n"
-            "Спробуйте формат: <i>25.12.2025 15:00</i> або <i>Завтра о 9 вечора</i>",
-            parse_mode="HTML"
-        )
-        return GET_DEADLINE
-
-    if parsed_date < datetime.now():
-        await update.message.reply_text(
-            "⏳ Ця дата вже минула! Введіть майбутній час.",
-        )
+    if not parsed_date or parsed_date < datetime.now():
+        await update.message.reply_text("❌ Некоректна дата або дата в минулому.")
         return GET_DEADLINE
 
     formatted_date = parsed_date.strftime('%Y-%m-%d %H:%M:%S')
 
-    task_text = context.user_data["current_task_text"]
-    add_task(user.id, task_text, formatted_date)
+    context.user_data['current_deadline'] = formatted_date
+
+    reply_keyboard = [
+        ["За 15 хв", "За 1 год"],
+        ["За 3 год", "За 1 день"],
+        ["Без нагадування"]
+    ]
 
     await update.message.reply_text(
-        f"✅ Завдання додано:\n"
-        f"<b>{task_text}</b>\n"
-        f"⏰ Дедлайн: {formatted_date}",
-        parse_mode="HTML",
-        reply_markup=MAIN_KEYBOARD_MARKUP
+        f"✅ Дедлайн розпізнано: {formatted_date}\n\n"
+        "<b>За скільки часу до кінця надіслати нагадування?</b>",
+        reply_markup=ReplyKeyboardMarkup(
+            reply_keyboard, one_time_keyboard=True, resize_keyboard=True
+        ),
+        parse_mode="HTML"
     )
 
-    context.user_data.clear()
-    return ConversationHandler.END
+    return GET_REMINDER
 
 
 async def skip_deadline(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     user = update.effective_user
     task_text = context.user_data["current_task_text"]
-    add_task(user.id, task_text)
+    add_task(user.id, task_text, None, 0)
 
     await update.message.reply_text(
-        f"✅ Завдання додано:\n"
-        f"<b>{task_text}</b> (без дедлайну)",
+        f"✅ Завдання додано:\n<b>{task_text}</b> (без дедлайну)",
         parse_mode="HTML",
         reply_markup=MAIN_KEYBOARD_MARKUP
     )
+    context.user_data.clear()
+    return ConversationHandler.END
+
+async def receive_reminder_offset(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    text = update.message.text
+    user = update.effective_user
+
+    offest_minutes = 30
+
+    if text == "За 15 хв":
+        offset_minutes = 15
+    elif text == "За 1 год":
+        offset_minutes = 60
+    elif text == "За 3 год":
+        offset_minutes = 180
+    elif text == "За 1 день":
+        offset_minutes = 1440
+    elif text == "Без нагадування":
+        offset_minutes = 0
+    else:
+
+        try:
+            offset_minutes = int(text)
+        except ValueError:
+            await update.message.reply_text("Будь ласка, оберіть варіант з кнопок або введіть число хвилин.")
+            return GET_REMINDER
+
+    task_text = context.user_data["current_task_text"]
+    deadline = context.user_data["current_deadline"]
+
+    add_task(user.id, task_text, deadline, offset_minutes)
+
+    reminder_info = "Без нагадування" if offset_minutes == 0 else f"За {offset_minutes} хв"
+
+    await update.message.reply_text(
+        f"✅ Завдання успішно створено!\n"
+        f"📝 <b>{task_text}</b>\n"
+        f"⏰ {deadline}\n"
+        f"🔔 Нагадування: {reminder_info}",
+        parse_mode="HTML",
+        reply_markup=MAIN_KEYBOARD_MARKUP
+    )
+
     context.user_data.clear()
     return ConversationHandler.END
 
@@ -250,34 +286,41 @@ async def edit_receive_deadline(update: Update, context: ContextTypes.DEFAULT_TY
     context.user_data.clear()
     return ConversationHandler.END
 
+
 async def check_deadlines(context: ContextTypes.DEFAULT_TYPE):
     tasks = get_all_pending_tasks_with_deadline()
-
     now = datetime.now()
+
     for task in tasks:
         try:
-            deadline_str = task['deadline']
-            deadline_dt = datetime.strptime(deadline_str, "%Y-%m-%d %H:%M:%S")
+            deadline_dt = datetime.strptime(task['deadline'], '%Y-%m-%d %H:%M:%S')
+            offset_minutes = task['reminder_offset']
+
+            if offset_minutes == 0:
+                continue
 
             time_left = deadline_dt - now
-            if timedelta(minutes=0) < time_left <= timedelta(minutes=30):
+
+            if timedelta(minutes=0) < time_left <= timedelta(minutes=offset_minutes):
+
                 await context.bot.send_message(
                     chat_id=task['user_id'],
-                    text=f"⏰ <b>НАГАДУВАННЯ!</b>\n\n"
-                         f"Завдання: <b>{task['task_text']}</b>\n"
-                         f"Дедлайн: {deadline_str} (залишилось менше 30 хв!)",
+                    text=f"🔔 <b>НАГАДУВАННЯ!</b>\n"
+                         f"Залишилось менше {offset_minutes} хв до дедлайну!\n\n"
+                         f"📝 <b>{task['task_text']}</b>\n"
+                         f"⏰ Дедлайн: {task['deadline']}",
                     parse_mode="HTML"
                 )
-
                 set_reminder_sent(task['id'])
 
             elif time_left < timedelta(minutes=0):
                 await context.bot.send_message(
-                    char_id=task['user_id'],
+                    chat_id=task['user_id'],
                     text=f"🔥 <b>ДЕДЛАЙН ПРОСТРОЧЕНО!</b>\n\n"
                          f"Завдання: <b>{task['task_text']}</b>\n"
-                         f"Мало бути виконано: {deadline_str}",
+                         f"Мало бути виконано: {task['deadline']}",
                     parse_mode="HTML"
+
                 )
                 set_reminder_sent(task['id'])
 
@@ -467,11 +510,16 @@ def main() -> None:
             MessageHandler(filters.Regex("^Нове завдання 📝$"), new_task_start)
         ],
         states={
-            GET_TASK_TEXT: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_task_text)],
+            GET_TASK_TEXT: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, receive_task_text)
+            ],
             GET_DEADLINE: [
                 MessageHandler(filters.Regex("^Пропустити$"), skip_deadline),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, receive_deadline),
             ],
+            GET_REMINDER: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, receive_reminder_offset)
+            ]
         },
         fallbacks=[CommandHandler("cancel", cancel)],
     )
