@@ -3,10 +3,13 @@ import os
 from http.client import responses
 import dateparser
 from datetime import datetime, timedelta
+from datetime import time
+
 
 from dotenv import load_dotenv
 from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.error import BadRequest
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -18,7 +21,7 @@ from telegram.ext import (
     CallbackQueryHandler
     )
 
-from database import init_db, add_task, get_tasks, mark_task_done, delete_task_db, get_single_task, update_task_text, update_task_deadline, get_all_pending_tasks_with_deadline, set_reminder_sent
+from database import init_db, add_task, get_tasks, mark_task_done, delete_task_db, get_single_task, update_task_text, update_task_deadline, get_all_pending_tasks_with_deadline, set_reminder_sent, get_all_users_with_tasks, get_tasks_for_today
 
 load_dotenv()
 TOKEN = os.getenv("TG_TOKEN")
@@ -496,6 +499,31 @@ async def delete_task(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             reply_markup=MAIN_KEYBOARD_MARKUP
         )
 
+async def send_morning_digest(context: ContextTypes.DEFAULT_TYPE):
+    users = get_all_users_with_tasks()
+    for user_id in users:
+        todays_tasks = get_tasks_for_today(user_id)
+
+        if todays_tasks:
+            message_text = (
+                f"☀️ <b>Доброго ранку! Твій план на сьогодні:</b>\n\n"
+            )
+
+            for task in todays_tasks:
+                time_str = task['deadline'].split(' ')[1][:5]
+                message_text += f"▫️ <b>{time_str}</b> — {task['task_text']}\n"
+
+            message_text += "\nБажаю продуктивного дня! 🚀"
+
+            try:
+                await context.bot.send_message(
+                    chat_id=user_id,
+                    text=message_text,
+                    parse_mode="HTML"
+                )
+            except Exception as e:
+                logger.error(f"Не вдалося надіслати дайджест юзеру {user_id}: {e}")
+
 
 def main() -> None:
     #init db
@@ -580,6 +608,11 @@ def main() -> None:
 
     job_queue = application.job_queue
     job_queue.run_repeating(check_deadlines, interval=60, first=10)
+    job_queue.run_daily(
+        send_morning_digest,
+        time=time(hour=7, minute=0),
+        days=(0, 1, 2, 3, 4, 5, 6)
+    )
 
     print("Бот запускається... Натисніть Ctrl+C для зупинки.")
     application.run_polling()

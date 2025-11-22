@@ -211,5 +211,40 @@ def update_task_deadline(user_id: int, task_id: int, new_deadline: str | None) -
         if conn:
             conn.close()
 
+def get_all_users_with_tasks() -> list:
+    users = []
+    try:
+        conn = sqlite3.connect(DB_NAME)
+        cursor = conn.cursor()
+        cursor.execute("SELECT DISTINCT user_id FROM tasks")
+        users = [row[0] for row in cursor.fetchall()]
+    except sqlite3.Error as e:
+        logger.error(f"Помилка get_all_users: {e}")
+    finally:
+        if conn: conn.close()
+    return users
+def get_tasks_for_today(user_id: int) -> list:
+    tasks = []
+    try:
+        conn = sqlite3.connect(DB_NAME)
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+
+        today_str = datetime.now().strftime("%Y/%m/%d")
+        query = """
+        SELECT * FROM tasks 
+        WHERE user_id = ? 
+          AND status = 'pending'
+          AND deadline LIKE ?
+        """
+
+        cursor.execute(query, (user_id, f"%{today_str}%"))
+        tasks = cursor.fetchall()
+    except sqlite3.Error as e:
+        logger.error(f"Помилка get_tasks_for_today: {e}")
+    finally:
+        if conn: conn.close()
+    return tasks
+
 if __name__ == "__main__":
     init_db()
